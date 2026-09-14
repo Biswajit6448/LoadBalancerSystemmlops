@@ -1,0 +1,323 @@
+
+Option Explicit
+
+Sub ApplyLNCSFormatting()
+    On Error GoTo ErrorHandler
+    
+    Dim doc As Document
+    Dim para As Paragraph
+    Dim tbl As Table
+    Dim shp As InlineShape
+    Dim rng As Range
+    Dim i As Integer
+    Dim captionText As String
+    
+    ' Set reference to active document
+    Set doc = ActiveDocument
+    
+    ' Set document-wide settings (1-inch margins, Times font)
+    With doc.PageSetup
+        .LeftMargin = InchesToPoints(1)
+        .RightMargin = InchesToPoints(1)
+        .TopMargin = InchesToPoints(1)
+        .BottomMargin = InchesToPoints(1)
+    End With
+    
+    ' Create LNCS styles
+    CreateLNCSStyles
+    
+    ' Clean up LaTeX artifacts (e.g., \label{...})
+    CleanLaTeXArtifacts
+    
+    ' Apply Title and Author formatting
+    i = 1
+    For Each para In doc.Paragraphs
+        Set rng = para.Range
+        If i = 1 Then
+            ' Title: 14pt, bold, centered
+            rng.Style = "LNCS Title"
+            rng.ParagraphFormat.Alignment = wdAlignParagraphCenter
+        ElseIf i <= 4 And (InStr(rng.Text, "[0000-") > 0 Or InStr(rng.Text, "University") > 0 Or InStr(rng.Text, "@") > 0) Then
+            ' Author, affiliation, and email (centered, 10pt)
+            rng.Style = "LNCS Body"
+            rng.ParagraphFormat.Alignment = wdAlignParagraphCenter
+            rng.Font.Size = 10
+        Else
+            Exit For
+        End If
+        i = i + 1
+    Next para
+    
+    ' Apply formatting to paragraphs
+    i = 1
+    Dim prevWasHeading As Boolean
+    Dim prevWasTable As Boolean
+    Dim prevWasFigure As Boolean
+    prevWasHeading = False
+    prevWasTable = False
+    prevWasFigure = False
+    
+    For Each para In doc.Paragraphs
+        Set rng = para.Range
+        If i > 4 Then ' Skip title, author, affiliation, email
+            ' Default to Body style
+            rng.Style = "LNCS Body"
+            
+            ' Detect and format headings
+            If Left(Trim(rng.Text), 2) Like "[0-9]." Or Left(Trim(rng.Text), 4) Like "[0-9].[0-9]" Then
+                If Left(Trim(rng.Text), 4) Like "[0-9].[0-9]" Then
+                    rng.Style = "LNCS Heading 2"
+                Else
+                    rng.Style = "LNCS Heading 1"
+                End If
+                prevWasHeading = True
+            ElseIf InStr(LCase(rng.Text), "abstract") = 1 Or InStr(LCase(rng.Text), "keywords") = 1 Then
+                rng.Style = "LNCS Heading 1"
+                prevWasHeading = True
+            ElseIf InStr(LCase(rng.Text), "sample heading (third level)") > 0 Then
+                rng.Style = "LNCS Heading 3"
+                prevWasHeading = True
+            ElseIf InStr(LCase(rng.Text), "sample heading (fourth level)") > 0 Then
+                rng.Style = "LNCS Heading 4"
+                prevWasHeading = True
+            Else
+                prevWasHeading = False
+            End If
+            
+            ' Handle equations (centered, with number on right)
+            If InStr(rng.Text, "(" & i - 4 & ")") > 0 And rng.Words.Count < 20 Then
+                rng.Style = "LNCS Equation"
+                rng.ParagraphFormat.Alignment = wdAlignParagraphCenter
+                prevWasFigure = True
+            Else
+                prevWasFigure = False
+            End If
+            
+            ' Set indentation
+            If prevWasHeading Or prevWasTable Or prevWasFigure Then
+                para.FirstLineIndent = 0
+            Else
+                para.FirstLineIndent = InchesToPoints(0.2)
+            End If
+            
+            prevWasTable = (rng.Tables.Count > 0)
+        End If
+        i = i + 1
+    Next para
+    
+    ' Format tables (captions above, Times, 10pt)
+    i = 1
+    For Each tbl In doc.Tables
+        ' Set specific caption for Table 1 from the provided LaTeX
+        If i = 1 Then
+            captionText = "Table 1: Table captions should be placed above the tables."
+        Else
+            captionText = "Table " & i & ": [Table Caption Placeholder]"
+        End If
+        For Each para In doc.Paragraphs
+            If InStr(LCase(para.Range.Text), "table " & i & ":") > 0 Then
+                captionText = Trim(Replace(para.Range.Text, vbCrLf, ""))
+                para.Range.Delete
+                Exit For
+            End If
+        Next para
+        
+        ' Insert caption above table
+        Set rng = tbl.Range
+        rng.Collapse wdCollapseStart
+        rng.InsertBefore captionText & vbCrLf
+        rng.Paragraphs(1).Style = "LNCS Caption"
+        rng.Paragraphs(1).Alignment = wdAlignParagraphLeft
+        
+        ' Format table content
+        tbl.Range.Style = "LNCS Body"
+        tbl.Borders.Enable = True
+        tbl.Borders(wdBorderTop).LineStyle = wdLineStyleSingle
+        tbl.Borders(wdBorderBottom).LineStyle = wdLineStyleSingle
+        tbl.Borders(wdBorderLeft).LineStyle = wdLineStyleSingle
+        tbl.Borders(wdBorderRight).LineStyle = wdLineStyleSingle
+        tbl.AutoFitBehavior wdAutoFitContent
+        i = i + 1
+    Next tbl
+    
+    ' Format figures (captions below, Times, 10pt)
+    i = 1
+    For Each shp In doc.InlineShapes
+        If shp.Type = wdInlineShapePicture Then
+            ' Set specific caption for Figure 1 from the provided LaTeX
+            If i = 1 Then
+                captionText = "Figure 1: A figure caption is always placed below the illustration. Short captions are centered, while long ones are justified. The macro button chooses the correct format automatically."
+            Else
+                captionText = "Figure " & i & ": [Figure Caption Placeholder]"
+            End If
+            For Each para In doc.Paragraphs
+                If InStr(LCase(para.Range.Text), "fig. " & i & ".") > 0 Then
+                    captionText = Trim(Replace(para.Range.Text, vbCrLf, ""))
+                    para.Range.Delete
+                    Exit For
+                End If
+            Next para
+            
+            Set rng = shp.Range
+            rng.Collapse wdCollapseEnd
+            rng.InsertAfter vbCrLf & captionText
+            rng.Paragraphs(1).Style = "LNCS Caption"
+            If Len(captionText) < 50 Then
+                rng.Paragraphs(1).Alignment = wdAlignParagraphCenter
+            Else
+                rng.Paragraphs(1).Alignment = wdAlignParagraphJustify
+            End If
+            i = i + 1
+        End If
+    Next shp
+    
+    ' Format references
+    Set rng = doc.Content
+    rng.Find.Execute FindText:="References", MatchCase:=True
+    If rng.Find.Found Then
+        Set rng = rng.Paragraphs(1).Range
+        rng.Style = "LNCS Heading 1"
+        For Each para In rng.Next(wdParagraph, 100).Paragraphs
+            If InStr(para.Range.Text, "[") = 1 Then
+                para.Range.Style = "LNCS Reference"
+                para.FirstLineIndent = InchesToPoints(-0.2)
+                para.LeftIndent = InchesToPoints(0.2)
+            Else
+                Exit For
+            End If
+        Next para
+    End If
+    
+    ' Save as macro-enabled document
+    If LCase(Right(doc.FullName, 5)) <> ".docm" Then
+        doc.SaveAs2 FileName:=Replace(doc.FullName, ".docx", ".docm"), FileFormat:=wdFormatXMLDocumentMacroEnabled
+    End If
+    
+    MsgBox "LNCS formatting applied successfully! Document saved as .docm.", vbInformation
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error applying LNCS formatting: " & Err.Description, vbCritical
+End Sub
+
+Sub CreateLNCSStyles()
+    On Error Resume Next
+    Dim doc As Document
+    Set doc = ActiveDocument
+    
+    ' LNCS Title (14pt, bold, centered)
+    With doc.Styles.Add("LNCS Title", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 14
+        .Font.Bold = True
+        .ParagraphFormat.Alignment = wdAlignParagraphCenter
+        .ParagraphFormat.SpaceBefore = 0
+        .ParagraphFormat.SpaceAfter = 12
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    
+    ' LNCS Heading 1 (12pt, bold)
+    With doc.Styles.Add("LNCS Heading 1", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 12
+        .Font.Bold = True
+        .ParagraphFormat.SpaceBefore = 12
+        .ParagraphFormat.SpaceAfter = 6
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    
+    ' LNCS Heading 2 (10pt, bold)
+    With doc.Styles.Add("LNCS Heading 2", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .Font.Bold = True
+        .ParagraphFormat.SpaceBefore = 6
+        .ParagraphFormat.SpaceAfter = 3
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    
+    ' LNCS Heading 3 (10pt, bold, run-in)
+    With doc.Styles.Add("LNCS Heading 3", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .Font.Bold = True
+        .ParagraphFormat.SpaceBefore = 0
+        .ParagraphFormat.SpaceAfter = 0
+        .ParagraphFormat.KeepWithNext = True
+    End With
+    
+    ' LNCS Heading 4 (10pt, italic, run-in)
+    With doc.Styles.Add("LNCS Heading 4", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .Font.Italic = True
+        .ParagraphFormat.SpaceBefore = 0
+        .ParagraphFormat.SpaceAfter = 0
+        .ParagraphFormat.KeepWithNext = True
+    End With
+    
+    ' LNCS Body (10pt)
+    With doc.Styles.Add("LNCS Body", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .ParagraphFormat.SpaceBefore = 0
+        .ParagraphFormat.SpaceAfter = 6
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    
+    ' LNCS Caption (10pt)
+    With doc.Styles.Add("LNCS Caption", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .ParagraphFormat.SpaceBefore = 6
+        .ParagraphFormat.SpaceAfter = 6
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    
+    ' LNCS Equation (10pt, centered)
+    With doc.Styles.Add("LNCS Equation", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .ParagraphFormat.Alignment = wdAlignParagraphCenter
+        .ParagraphFormat.SpaceBefore = 6
+        .ParagraphFormat.SpaceAfter = 6
+    End With
+    
+    ' LNCS Reference (10pt, hanging indent)
+    With doc.Styles.Add("LNCS Reference", wdStyleTypeParagraph)
+        .Font.Name = "Times New Roman"
+        .Font.Size = 10
+        .ParagraphFormat.SpaceBefore = 0
+        .ParagraphFormat.SpaceAfter = 3
+        .ParagraphFormat.FirstLineIndent = InchesToPoints(-0.2)
+        .ParagraphFormat.LeftIndent = InchesToPoints(0.2)
+        .ParagraphFormat.LineSpacingRule = wdLineSpaceSingle
+    End With
+    On Error GoTo 0
+End Sub
+
+Sub CleanLaTeXArtifacts()
+    On Error Resume Next
+    Dim rng As Range
+    Set rng = ActiveDocument.Content
+    
+    ' Remove LaTeX labels (e.g., \label{...})
+    With rng.Find
+        .Text = "\\label{[*]}"
+        .MatchWildcards = True
+        .Replacement.Text = ""
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ' Remove other common LaTeX commands
+    With rng.Find
+        .Text = "\\[a-zA-Z]+{[*]}"
+        .MatchWildcards = True
+        .Replacement.Text = ""
+        .Execute Replace:=wdReplaceAll
+    End With
+    On Error GoTo 0
+End Sub
+
+
+
